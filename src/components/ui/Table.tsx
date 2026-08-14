@@ -9,6 +9,8 @@ export interface Column<T> {
   accessorKey: keyof T | string;
   cell?: (item: T) => React.ReactNode;
   sortable?: boolean;
+  width?: string;          // CSS width para o <th> (ex. '4rem')
+  align?: 'left' | 'right' | 'center'; // alinha th e td
 }
 
 interface TableProps<T> {
@@ -103,11 +105,13 @@ export function Table<T extends Record<string, any>>({
               {columns.map((col, idx) => {
                 const isSortable = col.sortable !== false;
                 const isActiveSort = isSortable && sortConfig?.key === col.accessorKey;
+                const justify = col.align === 'right' ? 'flex-end' : col.align === 'center' ? 'center' : undefined;
                 return (
                   <th
                     key={idx}
                     scope="col"
                     className={isSortable ? styles.sortableHeader : ''}
+                    style={{ width: col.width, textAlign: col.align ?? 'left' }}
                   >
                     {isSortable ? (
                       <button
@@ -122,7 +126,7 @@ export function Table<T extends Record<string, any>>({
                             : ''
                         }`}
                       >
-                        <span className={styles.headerContent}>
+                        <span className={styles.headerContent} style={{ justifyContent: justify }}>
                           {col.header}
                           {isActiveSort && (
                             <span className={styles.sortIcon}>
@@ -132,7 +136,7 @@ export function Table<T extends Record<string, any>>({
                         </span>
                       </button>
                     ) : (
-                      <span className={styles.headerContent}>{col.header}</span>
+                      <span className={styles.headerContent} style={{ justifyContent: justify }}>{col.header}</span>
                     )}
                   </th>
                 );
@@ -144,7 +148,7 @@ export function Table<T extends Record<string, any>>({
               paginatedData.map((row, rowIdx) => (
                 <tr key={rowIdx}>
                   {columns.map((col, colIdx) => (
-                    <td key={colIdx}>
+                    <td key={colIdx} style={{ textAlign: col.align ?? 'left' }}>
                       {col.cell ? col.cell(row) : row[col.accessorKey as keyof T]}
                     </td>
                   ))}

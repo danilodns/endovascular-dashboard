@@ -173,22 +173,25 @@ export default function MaterialsPage() {
   const brandFolder = selectedBrand ? selectedBrand.name : 'unbranded';
 
   const columns: Column<Material>[] = [
-    { header: 'ID', accessorKey: 'id' },
+    { header: 'ID', accessorKey: 'id', width: '4rem' },
     { header: 'Nome', accessorKey: 'name' },
     {
       header: 'Marca',
       accessorKey: 'brand_id',
+      width: '10rem',
       cell: (row) => row.brand?.name || '-'
     },
     {
       header: 'Tipo',
       accessorKey: 'material_type_id',
+      width: '10rem',
       cell: (row) => row.material_type?.name || '-'
     },
     {
       header: 'Brochura (PDF)',
       accessorKey: 'brochure_url',
       sortable: false,
+      width: '10rem',
       cell: (row) => row.brochure_url ? (
         <a
           href={row.brochure_url}
@@ -206,8 +209,10 @@ export default function MaterialsPage() {
       header: 'Ações',
       accessorKey: 'id',
       sortable: false,
+      align: 'center',
+      width: '9rem',
       cell: (row) => (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           <button
             className={`${formStyles.btn} ${formStyles.btnSecondary}`}
             style={{ padding: '0.375rem 0.5rem' }}

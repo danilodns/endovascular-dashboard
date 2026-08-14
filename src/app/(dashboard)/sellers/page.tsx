@@ -9,7 +9,7 @@ import { TableSkeleton } from '@/components/ui/TableSkeleton';
 import { Uploader } from '@/components/ui/Uploader';
 import { TierBadge } from '@/components/ui/TierBadge';
 import { sellerSchema, zodErrors } from '@/lib/validation';
-import { Plus, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, Boxes, X, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import formStyles from '@/components/ui/form.module.css';
 
@@ -27,6 +27,15 @@ type Seller = {
   created_at: string;
 };
 
+type StateRef = { id: number; name: string; uf: string };
+type MaterialRef = { id: number; name: string };
+type SellerRelation = {
+  state_id: number;
+  material_id: number;
+  state?: StateRef;
+  material?: MaterialRef;
+};
+
 export default function SellersPage() {
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +47,19 @@ export default function SellersPage() {
   const [pendingDelete, setPendingDelete] = useState<Seller | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Materials-by-state modal
+  const [materialsSeller, setMaterialsSeller] = useState<Seller | null>(null);
+  const [relations, setRelations] = useState<SellerRelation[]>([]);
+  const [relationsLoading, setRelationsLoading] = useState(false);
+  const [states, setStates] = useState<StateRef[]>([]);
+  const [materials, setMaterials] = useState<MaterialRef[]>([]);
+  const [relStateId, setRelStateId] = useState('');
+  const [relMaterialId, setRelMaterialId] = useState('');
+  const [isRelSaving, setIsRelSaving] = useState(false);
+  const [removingKey, setRemovingKey] = useState('');
+  const [relErrors, setRelErrors] = useState<Record<string, string>>({});
+  const [collapsedStates, setCollapsedStates] = useState<Set<number>>(new Set());
 
   // Form State
   const [formData, setFormData] = useState({
@@ -71,7 +93,98 @@ export default function SellersPage() {
 
   useEffect(() => {
     fetchSellers();
+    supabase.from('state').select('id, name, uf').order('name')
+      .then(({ data }) => data && setStates(data));
+    supabase.from('material').select('id, name').order('name')
+      .then(({ data }) => data && setMaterials(data));
   }, []);
+
+  const fetchRelations = async (sellerId: number) => {
+    setRelationsLoading(true);
+    const { data, error } = await supabase
+      .from('material_seller')
+      .select('state_id, material_id, state(id, name, uf), material(id, name)')
+      .eq('seller_id', sellerId);
+    if (error) {
+      toast.error('Erro ao buscar materiais do representante');
+    } else {
+      setRelations(data as unknown as SellerRelation[] || []);
+    }
+    setRelationsLoading(false);
+  };
+
+  const handleOpenMaterials = (seller: Seller) => {
+    setMaterialsSeller(seller);
+    setRelStateId('');
+    setRelMaterialId('');
+    setRelErrors({});
+    setCollapsedStates(new Set());
+    fetchRelations(seller.id);
+  };
+
+  const toggleStateGroup = (stateId: number) => {
+    setCollapsedStates((prev) => {
+      const next = new Set(prev);
+      if (next.has(stateId)) next.delete(stateId);
+      else next.add(stateId);
+      return next;
+    });
+  };
+
+  const handleRemoveRelation = async (r: SellerRelation) => {
+    if (!materialsSeller) return;
+    const key = `${r.state_id}-${r.material_id}`;
+    setRemovingKey(key);
+    const { error } = await supabase
+      .from('material_seller')
+      .delete()
+      .match({ state_id: r.state_id, seller_id: materialsSeller.id, material_id: r.material_id });
+    setRemovingKey('');
+    if (error) {
+      toast.error('Erro ao remover relação.');
+    } else {
+      toast.success('Relação removida');
+      setRelations((prev) => prev.filter((x) => `${x.state_id}-${x.material_id}` !== key));
+    }
+  };
+
+  const handleCloseMaterials = () => {
+    setMaterialsSeller(null);
+    setRelations([]);
+  };
+
+  const handleAddRelation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!materialsSeller) return;
+    if (!relStateId || !relMaterialId) {
+      setRelErrors({
+        state_id: relStateId ? '' : 'Selecione o estado.',
+        material_id: relMaterialId ? '' : 'Selecione o material.',
+      });
+      return;
+    }
+    setRelErrors({});
+    setIsRelSaving(true);
+    try {
+      const { error } = await supabase.from('material_seller').insert([{
+        state_id: parseInt(relStateId),
+        seller_id: materialsSeller.id,
+        material_id: parseInt(relMaterialId),
+      }]);
+      if (error) {
+        if (error.code === '23505') throw new Error('Este material já está vinculado a este representante neste estado.');
+        throw error;
+      }
+      toast.success('Relação adicionada com sucesso');
+      setRelStateId('');
+      setRelMaterialId('');
+      fetchRelations(materialsSeller.id);
+    } catch (error: any) {
+      toast.error(error.message || 'Erro ao adicionar relação');
+    } finally {
+      setIsRelSaving(false);
+    }
+  };
 
   const handleOpenModal = (seller?: Seller) => {
     if (seller) {
@@ -183,11 +296,12 @@ export default function SellersPage() {
   };
 
   const columns: Column<Seller>[] = [
-    { header: 'ID', accessorKey: 'id' },
+    { header: 'ID', accessorKey: 'id', width: '4rem' },
     {
       header: 'Banner',
       accessorKey: 'banner_url',
       sortable: false,
+      width: '6rem',
       cell: (row) => row.banner_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -201,13 +315,24 @@ export default function SellersPage() {
     },
     { header: 'Nome', accessorKey: 'name' },
     { header: 'Email', accessorKey: 'email', cell: (row) => row.email || '-' },
-    { header: 'Nível (Tier)', accessorKey: 'tier', cell: (row) => <TierBadge tier={row.tier} /> },
+    { header: 'Nível (Tier)', accessorKey: 'tier', width: '10rem', cell: (row) => <TierBadge tier={row.tier} /> },
     {
       header: 'Ações',
       accessorKey: 'id',
       sortable: false,
+      align: 'center',
+      width: '12rem',
       cell: (row) => (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <button
+            className={`${formStyles.btn} ${formStyles.btnSecondary}`}
+            style={{ padding: '0.375rem 0.5rem' }}
+            onClick={() => handleOpenMaterials(row)}
+            aria-label={`Materiais por estado de ${row.name}`}
+            title="Materiais por Estado"
+          >
+            <Boxes size={16} />
+          </button>
           <button
             className={`${formStyles.btn} ${formStyles.btnSecondary}`}
             style={{ padding: '0.375rem 0.5rem' }}
@@ -334,6 +459,145 @@ export default function SellersPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={!!materialsSeller}
+        onClose={handleCloseMaterials}
+        title={`Materiais por Estado — ${materialsSeller?.name ?? ''}`}
+      >
+        <div className={formStyles.form}>
+          <form onSubmit={handleAddRelation} className={formStyles.formGroup}>
+            <label className={formStyles.label} style={{ display: 'block', marginBottom: '0.5rem' }}>Adicionar novo material</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <select
+                  className={formStyles.select}
+                  value={relStateId}
+                  onChange={(e) => setRelStateId(e.target.value)}
+                  aria-label="Estado"
+                >
+                  <option value="" disabled>Estado</option>
+                  {states.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.uf})</option>)}
+                </select>
+                {relErrors.state_id && <span className={formStyles.errorText} role="alert">{relErrors.state_id}</span>}
+              </div>
+              <div>
+                <select
+                  className={formStyles.select}
+                  value={relMaterialId}
+                  onChange={(e) => setRelMaterialId(e.target.value)}
+                  aria-label="Material"
+                >
+                  <option value="" disabled>Material</option>
+                  {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                {relErrors.material_id && <span className={formStyles.errorText} role="alert">{relErrors.material_id}</span>}
+              </div>
+            </div>
+            <div className={formStyles.actions}>
+              <button
+                type="submit"
+                className={`${formStyles.btn} ${formStyles.btnPrimary}`}
+                disabled={isRelSaving}
+              >
+                {isRelSaving ? 'Adicionando...' : 'Adicionar Relação'}
+              </button>
+            </div>
+          </form>
+
+          <div
+            className={formStyles.formGroup}
+            style={{
+              borderTop: '1px solid var(--border-color)',
+              paddingTop: '1rem',
+              maxHeight: '50vh',
+              overflowY: 'auto',
+            }}
+          >
+            {relationsLoading ? (
+              <p>Carregando...</p>
+            ) : relations.length === 0 ? (
+              <p style={{ color: 'var(--foreground-muted)' }}>Nenhum material vinculado a este representante.</p>
+            ) : (
+              Object.values(
+                relations.reduce<Record<number, { stateId: number; label: string; items: SellerRelation[] }>>((acc, r) => {
+                  if (!r.state || !r.material) return acc;
+                  acc[r.state_id] ??= {
+                    stateId: r.state_id,
+                    label: `${r.state.name} (${r.state.uf})`,
+                    items: [],
+                  };
+                  acc[r.state_id].items.push(r);
+                  return acc;
+                }, {})
+              ).map((group) => {
+                const collapsed = collapsedStates.has(group.stateId);
+                return (
+                <div key={group.stateId} style={{ marginBottom: '1rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleStateGroup(group.stateId)}
+                    aria-expanded={!collapsed}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.375rem',
+                      width: '100%',
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'inherit',
+                      font: 'inherit',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      marginBottom: '0.375rem',
+                    }}
+                  >
+                    {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    {group.label}
+                    <span style={{ fontWeight: 400, color: 'var(--foreground-muted)' }}>
+                      ({group.items.length})
+                    </span>
+                  </button>
+                  <div style={{ display: collapsed ? 'none' : 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                    {group.items.map((r) => {
+                      const key = `${r.state_id}-${r.material_id}`;
+                      return (
+                        <div
+                          key={key}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '0.5rem',
+                            padding: '0.375rem 0.625rem',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          <span>{r.material?.name}</span>
+                          <button
+                            type="button"
+                            className={`${formStyles.btn} ${formStyles.btnDanger}`}
+                            style={{ padding: '0.25rem 0.375rem' }}
+                            disabled={removingKey === key}
+                            onClick={() => handleRemoveRelation(r)}
+                            aria-label={`Remover ${r.material?.name}`}
+                            title="Remover relação"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       </Modal>
 
       <ConfirmDialog

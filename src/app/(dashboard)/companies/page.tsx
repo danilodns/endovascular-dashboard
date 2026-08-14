@@ -39,6 +39,7 @@ export default function CompaniesPage() {
   const [name, setName] = useState('');
   const [stateId, setStateId] = useState<string>('');
   const [bannerUrl, setBannerUrl] = useState<string>('');
+  const [filterState, setFilterState] = useState<string>('');
 
   const supabase = createClient();
 
@@ -153,11 +154,12 @@ export default function CompaniesPage() {
   };
 
   const columns: Column<Company>[] = [
-    { header: 'ID', accessorKey: 'id' },
+    { header: 'ID', accessorKey: 'id', width: '4rem' },
     {
       header: 'Banner',
       accessorKey: 'banner_url',
       sortable: false,
+      width: '6rem',
       cell: (row) => row.banner_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -173,14 +175,17 @@ export default function CompaniesPage() {
     {
       header: 'Estado',
       accessorKey: 'state_id',
+      width: '10rem',
       cell: (row) => row.state ? `${row.state.name} (${row.state.uf})` : '-'
     },
     {
       header: 'Ações',
       accessorKey: 'id',
       sortable: false,
+      align: 'center',
+      width: '9rem',
       cell: (row) => (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           <button
             className={`${formStyles.btn} ${formStyles.btnSecondary}`}
             style={{ padding: '0.375rem 0.5rem' }}
@@ -217,11 +222,23 @@ export default function CompaniesPage() {
         </button>
       </div>
 
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem', maxWidth: '300px', marginLeft: 'auto' }}>
+        <select
+          className={formStyles.select}
+          value={filterState}
+          onChange={(e) => setFilterState(e.target.value)}
+          aria-label="Filtrar por estado"
+        >
+          <option value="">Todos os Estados</option>
+          {states.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.uf})</option>)}
+        </select>
+      </div>
+
       {loading ? (
         <TableSkeleton columns={5} />
       ) : (
         <Table
-          data={companies}
+          data={filterState ? companies.filter((c) => c.state_id === Number(filterState)) : companies}
           columns={columns}
           searchKeys={['name']}
         />

@@ -116,14 +116,16 @@ export default function MaterialTypesPage() {
   };
 
   const columns: Column<MaterialType>[] = [
-    { header: 'ID', accessorKey: 'id' },
+    { header: 'ID', accessorKey: 'id', width: '4rem' },
     { header: 'Nome', accessorKey: 'name' },
     {
       header: 'Ações',
       accessorKey: 'id',
       sortable: false,
+      align: 'center',
+      width: '9rem',
       cell: (row) => (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           <button
             className={`${formStyles.btn} ${formStyles.btnSecondary}`}
             style={{ padding: '0.375rem 0.5rem' }}

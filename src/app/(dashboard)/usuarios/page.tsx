@@ -99,6 +99,8 @@ export default function UsuariosPage() {
       header: 'Ações',
       accessorKey: 'id',
       sortable: false,
+      align: 'center',
+      width: '6rem',
       cell: (row) => (
         <button
           type="button"

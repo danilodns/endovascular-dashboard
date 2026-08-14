@@ -12,7 +12,6 @@ import {
   MapPin,
   Activity,
   LayoutDashboard,
-  Link as LinkIcon,
   History,
   UserCog,
   X,
@@ -30,11 +29,6 @@ const navItems = [
   { name: 'Procedimentos', href: '/procedures', icon: Activity },
   { name: 'Auditoria', href: '/auditoria', icon: History },
   { name: 'Usuários', href: '/usuarios', icon: UserCog },
-];
-
-const relationItems = [
-  { name: 'Material ↔ Representante', href: '/relations/material-seller', icon: LinkIcon },
-  { name: 'Procedimento ↔ Material', href: '/relations/procedure-material', icon: LinkIcon },
 ];
 
 interface SidebarProps {
@@ -75,29 +69,6 @@ export function Sidebar({ open, onNavigate, onClose }: SidebarProps) {
           <p className={styles.sectionTitle}>Gerenciar</p>
           <ul className={styles.navList}>
             {navItems.map((item) => {
-              const isActive = pathname === item.href;
-              const Icon = item.icon;
-              return (
-                <li key={item.name}>
-                  <Link
-                    href={item.href}
-                    onClick={onNavigate}
-                    className={`${styles.navLink} ${isActive ? styles.active : ''}`}
-                    aria-current={isActive ? 'page' : undefined}
-                  >
-                    <Icon size={20} aria-hidden="true" />
-                    <span>{item.name}</span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <div className={styles.section}>
-          <p className={styles.sectionTitle}>Relacionamentos</p>
-          <ul className={styles.navList}>
-            {relationItems.map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
               return (

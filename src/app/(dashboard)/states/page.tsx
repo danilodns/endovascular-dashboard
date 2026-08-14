@@ -25,6 +25,7 @@ export default function StatesPage() {
   const [name, setName] = useState('');
   const [uf, setUf] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [copyFrom, setCopyFrom] = useState('');
 
   const [pendingDelete, setPendingDelete] = useState<State | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -56,6 +57,7 @@ export default function StatesPage() {
       setEditingState(null);
       setName('');
       setUf('');
+      setCopyFrom('');
     }
     setErrors({});
     setIsModalOpen(true);
@@ -66,6 +68,7 @@ export default function StatesPage() {
     setEditingState(null);
     setName('');
     setUf('');
+    setCopyFrom('');
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -87,11 +90,32 @@ export default function StatesPage() {
         if (error) throw error;
         toast.success('Estado atualizado com sucesso');
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('state')
-          .insert([{ name, uf: uf.toUpperCase() }]);
+          .insert([{ name, uf: uf.toUpperCase() }])
+          .select('id')
+          .single();
         if (error) throw error;
-        toast.success('Estado criado com sucesso');
+
+        if (copyFrom) {
+          const { data: relations, error: relError } = await supabase
+            .from('material_seller')
+            .select('seller_id, material_id')
+            .eq('state_id', Number(copyFrom));
+          if (relError) throw relError;
+
+          if (relations && relations.length > 0) {
+            const { error: insertError } = await supabase
+              .from('material_seller')
+              .insert(relations.map((r) => ({ ...r, state_id: data.id })));
+            if (insertError) throw insertError;
+            toast.success(`Estado criado com sucesso (${relations.length} vínculos copiados)`);
+          } else {
+            toast.success('Estado criado com sucesso (nenhum dado para copiar)');
+          }
+        } else {
+          toast.success('Estado criado com sucesso');
+        }
       }
       handleCloseModal();
       fetchStates();
@@ -121,15 +145,17 @@ export default function StatesPage() {
   };
 
   const columns: Column<State>[] = [
-    { header: 'ID', accessorKey: 'id' },
+    { header: 'ID', accessorKey: 'id', width: '4rem' },
     { header: 'Nome', accessorKey: 'name' },
-    { header: 'UF', accessorKey: 'uf' },
+    { header: 'UF', accessorKey: 'uf', width: '6rem' },
     {
       header: 'Ações',
       accessorKey: 'id',
       sortable: false,
+      align: 'center',
+      width: '9rem',
       cell: (row) => (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           <button
             className={`${formStyles.btn} ${formStyles.btnSecondary}`}
             style={{ padding: '0.375rem 0.5rem' }}
@@ -213,6 +239,24 @@ export default function StatesPage() {
             />
             {errors.uf && <span className={formStyles.errorText} role="alert">{errors.uf}</span>}
           </div>
+
+          {!editingState && (
+            <div className={formStyles.formGroup}>
+              <label className={formStyles.label} htmlFor="copyFrom">Copiar dados de outro estado (opcional)</label>
+              <select
+                id="copyFrom"
+                className={formStyles.input}
+                value={copyFrom}
+                onChange={(e) => setCopyFrom(e.target.value)}
+              >
+                <option value="">Não copiar</option>
+                {states.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.uf})</option>
+                ))}
+              </select>
+              <small>Copia os representantes e materiais vinculados ao estado selecionado.</small>
+            </div>
+          )}
 
           <div className={formStyles.actions}>
             <button
