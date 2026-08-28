@@ -38,6 +38,9 @@ type SellerContactRow = {
 type ContactForm = {
   id?: number; // set when editing an existing contact row
   state_id: string; // form fields are strings; state_id parses to int on save
+  // Import offer for fresh rows only: '' = not asked yet, 'none' = declined,
+  // otherwise the source state_id whose materials get copied on save.
+  importFrom: string;
   alias_name: string;
   phone: string;
   email: string;
@@ -50,6 +53,7 @@ type ContactForm = {
 const emptyContact = (): ContactForm => ({
   id: undefined,
   state_id: '',
+  importFrom: '',
   alias_name: '',
   phone: '',
   email: '',
@@ -103,7 +107,13 @@ export default function SellersPage() {
     banner_url: ''
   });
   const [contacts, setContacts] = useState<ContactForm[]>([emptyContact()]);
-  const [originalContactIds, setOriginalContactIds] = useState<number[]>([]);
+  // Existing contacts removed from the form, awaiting delete at save time.
+  // removeMaterials = also delete this seller's material_seller rows for that state.
+  const [pendingContactDeletes, setPendingContactDeletes] = useState<{ id: number; state_id: string; removeMaterials: boolean }[]>([]);
+  const [confirmRemoveIndex, setConfirmRemoveIndex] = useState<number | null>(null);
+  // material_seller rows of the seller being edited, grouped as state_id -> count.
+  // Null until a fresh contact picks a state (the import offer needs it).
+  const [materialCounts, setMaterialCounts] = useState<Record<number, number> | null>(null);
 
   const supabase = createClient();
 
@@ -218,6 +228,9 @@ export default function SellersPage() {
   };
 
   const handleOpenModal = async (seller?: Seller) => {
+    setMaterialCounts(null);
+    setPendingContactDeletes([]);
+    setConfirmRemoveIndex(null);
     if (seller) {
       setEditingSeller(seller);
       setFormData({
@@ -232,11 +245,11 @@ export default function SellersPage() {
         .order('id');
       if (error) toast.error('Erro ao buscar contatos do representante');
       const rows = (data as SellerContactRow[] | null) ?? [];
-      setOriginalContactIds(rows.map(r => r.id));
       setContacts(rows.length
         ? rows.map(r => ({
             id: r.id,
             state_id: String(r.state_id),
+            importFrom: '',
             alias_name: r.alias_name || '',
             phone: r.phone || '',
             email: r.email || '',
@@ -249,7 +262,6 @@ export default function SellersPage() {
     } else {
       setEditingSeller(null);
       setFormData({ name: '', tier: '', banner_url: '' });
-      setOriginalContactIds([]);
       setContacts([emptyContact()]);
     }
     setErrors({});
@@ -266,13 +278,48 @@ export default function SellersPage() {
   };
 
   const handleContactChange = (index: number, field: keyof ContactForm, value: string) => {
-    setContacts(prev => prev.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
+    setContacts(prev => prev.map((c, i) => (
+      // Picking a different state invalidates any pending import choice
+      i === index ? { ...c, [field]: value, ...(field === 'state_id' ? { importFrom: '' } : {}) } : c
+    )));
+    if (field === 'state_id' && value && editingSeller && !contacts[index]?.id) {
+      void ensureMaterialCounts();
+    }
+  };
+
+  const ensureMaterialCounts = async () => {
+    if (materialCounts !== null || !editingSeller) return;
+    const { data } = await supabase
+      .from('material_seller')
+      .select('state_id')
+      .eq('seller_id', editingSeller.id);
+    const counts: Record<number, number> = {};
+    (data || []).forEach(r => { counts[r.state_id] = (counts[r.state_id] ?? 0) + 1; });
+    setMaterialCounts(counts);
+  };
+
+  const setImportFrom = (index: number, value: string) => {
+    setContacts(prev => prev.map((c, i) => (i === index ? { ...c, importFrom: value } : c)));
   };
 
   const addContact = () => setContacts(prev => [...prev, emptyContact()]);
 
-  const removeContact = (index: number) => {
-    setContacts(prev => prev.length > 1 ? prev.filter((_, i) => i !== index) : [emptyContact()]);
+  const requestRemoveContact = (index: number) => {
+    if (contacts[index]?.id) {
+      // Existing row: ask whether its state's materials should go too
+      setConfirmRemoveIndex(index);
+      void ensureMaterialCounts();
+    } else {
+      setContacts(prev => prev.length > 1 ? prev.filter((_, i) => i !== index) : [emptyContact()]);
+    }
+  };
+
+  const confirmRemoveContact = (index: number, removeMaterials: boolean) => {
+    const c = contacts[index];
+    if (!c?.id) return;
+    setPendingContactDeletes(prev => [...prev, { id: c.id!, state_id: c.state_id, removeMaterials }]);
+    setContacts(prev => prev.filter((_, i) => i !== index));
+    setConfirmRemoveIndex(null);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -339,11 +386,27 @@ export default function SellersPage() {
         sellerId = editingSeller.id;
 
         // Sync contacts: delete removed rows, update kept ones, insert new ones
-        const keptIds = new Set(filled.map(c => c.id).filter(Boolean) as number[]);
-        const toDelete = originalContactIds.filter(id => !keptIds.has(id));
-        if (toDelete.length) {
-          const { error } = await supabase.from('seller_contact').delete().in('id', toDelete);
+        if (pendingContactDeletes.length) {
+          const { error } = await supabase.from('seller_contact')
+            .delete()
+            .in('id', pendingContactDeletes.map(d => d.id));
           if (error) throw error;
+        }
+        // Material cleanup the user opted into. Non-fatal: the contact is
+        // already deleted, so failures only warn.
+        for (const d of pendingContactDeletes) {
+          if (!d.removeMaterials) continue;
+          const stateName = states.find(s => s.id.toString() === d.state_id)?.name;
+          const { error: matError } = await supabase
+            .from('material_seller')
+            .delete()
+            .eq('seller_id', sellerId)
+            .eq('state_id', parseInt(d.state_id, 10));
+          if (matError) {
+            toast.error(`Não foi possível remover os materiais de ${stateName ?? 'um estado'}.`);
+          } else {
+            toast.success(`Materiais de ${stateName ?? 'um estado'} removidos.`);
+          }
         }
         const existing = filled.filter(c => c.id);
         const fresh = filled.filter(c => !c.id);
@@ -354,6 +417,33 @@ export default function SellersPage() {
         if (fresh.length) {
           const { error } = await supabase.from('seller_contact').insert(fresh.map(c => toRow(c, sellerId)));
           if (error) throw error;
+        }
+        // Copy material_seller rows into the new states the user opted into.
+        // Non-fatal: contacts are already saved, so failures only warn.
+        for (const c of fresh) {
+          if (!c.importFrom || c.importFrom === 'none') continue;
+          const sourceName = states.find(s => s.id.toString() === c.importFrom)?.name;
+          const targetName = states.find(s => s.id.toString() === c.state_id)?.name;
+          const { data: src, error } = await supabase
+            .from('material_seller')
+            .select('material_id')
+            .eq('seller_id', sellerId)
+            .eq('state_id', parseInt(c.importFrom, 10));
+          if (error || !src?.length) {
+            toast.error(`Não foi possível importar os materiais de ${sourceName ?? 'outro estado'}.`);
+            continue;
+          }
+          const { error: insertError } = await supabase
+            .from('material_seller')
+            .upsert(
+              src.map(r => ({ seller_id: sellerId, state_id: parseInt(c.state_id, 10), material_id: r.material_id })),
+              { onConflict: 'seller_id,state_id,material_id', ignoreDuplicates: true }
+            );
+          if (insertError) {
+            toast.error(`Não foi possível importar os materiais de ${sourceName ?? 'outro estado'}.`);
+          } else {
+            toast.success(`${src.length} materiais importados de ${sourceName ?? 'outro estado'} para ${targetName ?? 'o novo estado'}.`);
+          }
         }
         toast.success('Representante atualizado com sucesso');
       } else {
@@ -594,6 +684,60 @@ export default function SellersPage() {
                   </div>
                 </div>
 
+                {editingSeller && !contact.id && contact.state_id && contact.importFrom === '' && materialCounts
+                  && Object.keys(materialCounts).some(sid => sid !== contact.state_id) && (
+                  <div
+                    style={{
+                      border: '1px dashed var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '0.75rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    <span className={formStyles.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <Boxes size={14} aria-hidden="true" /> Importar os materiais de outro estado para este contato?
+                    </span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', alignItems: 'center' }}>
+                      <select
+                        className={formStyles.select}
+                        defaultValue=""
+                        onChange={(e) => e.target.value && setImportFrom(i, e.target.value)}
+                        aria-label={`Estado de origem dos materiais para o contato ${stateName ?? `#${i + 1}`}`}
+                      >
+                        <option value="" disabled>Estado de origem</option>
+                        {Object.entries(materialCounts)
+                          .filter(([sid]) => sid !== contact.state_id)
+                          .map(([sid, count]) => {
+                            const s = states.find(x => x.id.toString() === sid);
+                            return (
+                              <option key={sid} value={sid}>
+                                {s ? `${s.name} (${s.uf})` : sid} — {count} {count === 1 ? 'material' : 'materiais'}
+                              </option>
+                            );
+                          })}
+                      </select>
+                      <button
+                        type="button"
+                        className={`${formStyles.btn} ${formStyles.btnSecondary}`}
+                        onClick={() => setImportFrom(i, 'none')}
+                      >
+                        Agora não
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {editingSeller && !contact.id && contact.importFrom && contact.importFrom !== 'none' && (
+                  <span className={formStyles.helperText} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
+                    <Boxes size={14} aria-hidden="true" />
+                    {materialCounts?.[parseInt(contact.importFrom, 10)] ?? ''} materiais de{' '}
+                    {states.find(s => s.id.toString() === contact.importFrom)?.name ?? 'outro estado'}{' '}
+                    serão importados ao salvar.
+                  </span>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div className={formStyles.formGroup}>
                     <label className={formStyles.label} htmlFor={`contact-phone-${i}`}>Telefone</label>
@@ -667,13 +811,58 @@ export default function SellersPage() {
                   <button
                     type="button"
                     className={`${formStyles.btn} ${formStyles.btnDanger}`}
-                    onClick={() => removeContact(i)}
+                    onClick={() => requestRemoveContact(i)}
                     aria-label={`Remover contato ${stateName ?? `#${i + 1}`}`}
                     title="Remover contato"
                   >
                     <Trash2 size={16} />
                   </button>
                 </div>
+
+                {confirmRemoveIndex === i && contact.id && (
+                  <div
+                    style={{
+                      border: '1px dashed var(--danger)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '0.75rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    <span className={formStyles.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <Trash2 size={14} aria-hidden="true" /> Remover também os materiais deste estado?
+                    </span>
+                    <span className={formStyles.helperText}>
+                      {materialCounts?.[parseInt(contact.state_id, 10)]
+                        ? `${materialCounts[parseInt(contact.state_id, 10)]} materiais vinculados a ${stateName ?? 'este estado'} serão removidos junto com o contato.`
+                        : `Nenhum material vinculado a ${stateName ?? 'este estado'} — apenas o contato será removido.`}
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className={`${formStyles.btn} ${formStyles.btnDanger}`}
+                        onClick={() => confirmRemoveContact(i, true)}
+                      >
+                        Remover contato e materiais
+                      </button>
+                      <button
+                        type="button"
+                        className={`${formStyles.btn} ${formStyles.btnSecondary}`}
+                        onClick={() => confirmRemoveContact(i, false)}
+                      >
+                        Remover apenas o contato
+                      </button>
+                      <button
+                        type="button"
+                        className={`${formStyles.btn} ${formStyles.btnSecondary}`}
+                        onClick={() => setConfirmRemoveIndex(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </fieldset>
             );
           })}
