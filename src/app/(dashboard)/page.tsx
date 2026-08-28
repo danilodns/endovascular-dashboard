@@ -32,7 +32,7 @@ export default function DashboardPage() {
       const [statesRes, sellersRes, msRes, matCountRes, compCountRes, brandCountRes] = await Promise.all([
         supabase.from('state').select('id, name').order('name'),
         supabase.from('seller').select(
-          'id, name, tier, phone, email, address, bairro, cep, complemento, banner_url'
+          'id, name, tier, banner_url, seller_contact(id, state_id, alias_name, phone, email, address, bairro, cep)'
         ),
         supabase.from('material_seller').select(`
           seller_id,
@@ -111,20 +111,29 @@ export default function DashboardPage() {
     );
   }, [matSellers, stateFilter]);
 
-  // 3. Representatives directory (cards), sorted
+  // 3. Representatives directory (cards), sorted.
+  // Contact shown: the one for the selected state, falling back to the first.
   const representatives = useMemo<Representative[]>(() => {
     const scope = sellerIdsInScope
       ? sellers.filter(s => sellerIdsInScope.has(s.id))
       : sellers;
 
-    const sorted = [...scope];
+    const toRep = (s: any): Representative => {
+      const list = (s.seller_contact ?? []) as Array<Representative['contact'] & { state_id: number }>;
+      const contact = stateFilter
+        ? list.find(c => String(c.state_id) === stateFilter) ?? list[0] ?? null
+        : list[0] ?? null;
+      return { name: s.name, tier: s.tier, banner_url: s.banner_url, contact };
+    };
+
+    const sorted = scope.map(toRep);
     if (sortMode === 'tier') {
       sorted.sort((a, b) => (b.tier ?? -1) - (a.tier ?? -1) || (a.name || '').localeCompare(b.name || ''));
     } else {
       sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }
-    return sorted as Representative[];
-  }, [sellers, sellerIdsInScope, sortMode]);
+    return sorted;
+  }, [sellers, sellerIdsInScope, sortMode, stateFilter]);
 
   const columns: Column<any>[] = [
     { header: 'Representante', accessorKey: 'representante' },

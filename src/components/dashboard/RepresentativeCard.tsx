@@ -3,19 +3,25 @@
 import { Phone, Mail, MapPin } from 'lucide-react';
 import { TierBadge } from '@/components/ui/TierBadge';
 
-export interface Representative {
-  name: string;
-  tier: number | null;
+export interface RepresentativeContact {
+  alias_name: string | null;
   phone: string | null;
   email: string | null;
   address: string | null;
   bairro: string | null;
   cep: string | null;
+}
+
+export interface Representative {
+  name: string;
+  tier: number | null;
   banner_url: string | null;
+  contact: RepresentativeContact | null;
 }
 
 export function RepresentativeCard({ rep }: { rep: Representative }) {
-  const location = [rep.address, rep.bairro, rep.cep].filter(Boolean).join(' • ');
+  const c = rep.contact;
+  const location = c ? [c.address, c.bairro, c.cep].filter(Boolean).join(' • ') : '';
   const initial = (rep.name?.trim()?.[0] ?? '?').toUpperCase();
 
   return (
@@ -66,17 +72,22 @@ export function RepresentativeCard({ rep }: { rep: Representative }) {
           </h3>
           <TierBadge tier={rep.tier} />
         </div>
+        {c?.alias_name && (
+          <span style={{ fontSize: '0.8rem', color: 'var(--foreground-muted)', marginTop: '-0.375rem' }}>
+            exibido como {c.alias_name}
+          </span>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.85rem', color: 'var(--foreground-muted)' }}>
-          {rep.phone && (
+          {c?.phone && (
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Phone size={14} aria-hidden="true" /> {rep.phone}
+              <Phone size={14} aria-hidden="true" /> {c.phone}
             </span>
           )}
-          {rep.email && (
+          {c?.email && (
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden' }}>
               <Mail size={14} aria-hidden="true" />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rep.email}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email}</span>
             </span>
           )}
           {location && (
@@ -85,7 +96,7 @@ export function RepresentativeCard({ rep }: { rep: Representative }) {
               <span>{location}</span>
             </span>
           )}
-          {!rep.phone && !rep.email && !location && (
+          {!c?.phone && !c?.email && !location && (
             <span style={{ fontStyle: 'italic' }}>Sem dados de contato.</span>
           )}
         </div>

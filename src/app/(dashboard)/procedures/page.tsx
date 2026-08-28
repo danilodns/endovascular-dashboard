@@ -16,7 +16,9 @@ type Procedure = {
   name: string;
 };
 
-type MaterialRef = { id: number; name: string };
+type MaterialRef = { id: number; name: string; material_type?: { name: string } | null };
+
+const cap = (s?: string | null) => (s ?? '').split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 type ProcedureMaterial = {
   material_id: number;
   isoptional: boolean;
@@ -71,7 +73,7 @@ export default function ProceduresPage() {
     setMaterialsLoading(true);
     const { data, error } = await supabase
       .from('procedure_material')
-      .select('material_id, isoptional, material(id, name)')
+      .select('material_id, isoptional, material(id, name, material_type(name))')
       .eq('procedure_id', procedureId);
     if (error) {
       toast.error('Erro ao buscar materiais do procedimento');
@@ -230,7 +232,7 @@ export default function ProceduresPage() {
 
   const columns: Column<Procedure>[] = [
     { header: 'ID', accessorKey: 'id', width: '4rem' },
-    { header: 'Nome', accessorKey: 'name' },
+    { header: 'Nome', accessorKey: 'name', cell: (row) => cap(row.name) },
     {
       header: 'Ações',
       accessorKey: 'id',
@@ -336,7 +338,7 @@ export default function ProceduresPage() {
       <Modal
         isOpen={!!materialsProcedure}
         onClose={handleCloseMaterials}
-        title={`Materiais — ${materialsProcedure?.name ?? ''}`}
+        title={`Materiais — ${cap(materialsProcedure?.name)}`}
       >
         <div className={formStyles.form}>
           <form onSubmit={handleAddMaterial} className={formStyles.formGroup}>
@@ -350,7 +352,7 @@ export default function ProceduresPage() {
                 style={{ flex: '1', minWidth: '200px' }}
               >
                 <option value="" disabled>Material</option>
-                {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                {materials.map((m) => <option key={m.id} value={m.id}>{cap(m.name)}</option>)}
               </select>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
                 <input
@@ -416,9 +418,22 @@ export default function ProceduresPage() {
                     </span>
                   </button>
                   <div style={{ display: section.collapsed ? 'none' : 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-                    {[...section.items]
-                      .sort((a, b) => (a.material?.name ?? '').localeCompare(b.material?.name ?? ''))
-                      .map((m) => (
+                    {Object.entries(
+                      [...section.items]
+                        .sort((a, b) =>
+                          (a.material?.material_type?.name ?? 'Sem tipo').localeCompare(b.material?.material_type?.name ?? 'Sem tipo') ||
+                          (a.material?.name ?? '').localeCompare(b.material?.name ?? ''))
+                        .reduce<Record<string, ProcedureMaterial[]>>((groups, m) => {
+                          const key = m.material?.material_type?.name ?? 'Sem tipo';
+                          (groups[key] ||= []).push(m);
+                          return groups;
+                        }, {})
+                    ).map(([typeName, items]) => (
+                      <div key={typeName}>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--foreground-muted)', margin: '0.5rem 0 0.25rem', textTransform: 'capitalize' }}>
+                          {typeName}
+                        </div>
+                        {items.map((m) => (
                         <div
                           key={m.material_id}
                           style={{
@@ -431,7 +446,7 @@ export default function ProceduresPage() {
                             borderRadius: '6px',
                           }}
                         >
-                          <span>{m.material?.name}</span>
+                          <span>{cap(m.material?.name)}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                             <button
                               type="button"
@@ -455,7 +470,9 @@ export default function ProceduresPage() {
                             </button>
                           </div>
                         </div>
-                      ))}
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))

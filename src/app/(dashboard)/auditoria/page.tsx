@@ -28,6 +28,7 @@ const TABLE_LABELS: Record<string, string> = {
   state: 'Estado',
   brand: 'Marca',
   seller: 'Representante',
+  seller_contact: 'Contato do Representante',
   procedure: 'Procedimento',
   material_type: 'Tipo de Material',
   material: 'Material',

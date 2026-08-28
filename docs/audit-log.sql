@@ -94,7 +94,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'state','brand','seller','procedure','material_type','material',
+    'state','brand','seller','seller_contact','procedure','material_type','material',
     'procedure_material','material_seller','company'
   ]
   loop
