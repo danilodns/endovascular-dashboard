@@ -30,7 +30,9 @@ export function Modal({ isOpen, onClose, title, children, closeLabel = 'Fechar' 
     if (!isOpen) return;
 
     previouslyFocused.current = document.activeElement as HTMLElement;
-    document.body.style.overflow = 'hidden';
+    // No body scroll lock: scrolling on the backdrop scrolls the page behind
+    // (the overlay itself is not scrollable, so wheel events chain to the
+    // document); scrolling inside .content scrolls the modal only.
 
     const focusFirst = () => {
       const root = containerRef.current;
@@ -74,7 +76,6 @@ export function Modal({ isOpen, onClose, title, children, closeLabel = 'Fechar' 
     return () => {
       cancelAnimationFrame(raf);
       document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = '';
       previouslyFocused.current?.focus?.();
     };
   }, [isOpen]);

@@ -8,6 +8,8 @@
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 100;
+  /* Not scrollable on purpose: wheel events over the backdrop chain to the
+     document, so the page behind scrolls while the modal stays centered. */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -63,4 +65,8 @@
   padding: 1.5rem;
   overflow-y: auto;
   flex: 1;
+  /* min-height 0 lets the flex item shrink inside the max-height container;
+     overscroll contain stops a scroll past the end from dragging the page. */
+  min-height: 0;
+  overscroll-behavior: contain;
 }

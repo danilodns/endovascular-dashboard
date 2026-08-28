@@ -30,9 +30,12 @@ export const companySchema = z.object({
 
 export const sellerSchema = z.object({
   name: requiredString('Informe o nome do representante.'),
-  email: z.string().trim().email('Informe um e-mail válido.').or(z.literal('')).optional(),
-  phone: z.string().optional(),
   tier: z.string().optional(),
+});
+
+export const sellerContactSchema = z.object({
+  state_id: requiredString('Selecione o estado.'),
+  email: z.string().trim().email('Informe um e-mail válido.').or(z.literal('')).optional(),
 });
 
 export const procedureMaterialSchema = z.object({

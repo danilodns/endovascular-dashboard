@@ -8,24 +8,59 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { TableSkeleton } from '@/components/ui/TableSkeleton';
 import { Uploader } from '@/components/ui/Uploader';
 import { TierBadge } from '@/components/ui/TierBadge';
-import { sellerSchema, zodErrors } from '@/lib/validation';
-import { Plus, Edit2, Trash2, Boxes, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { sellerSchema, sellerContactSchema, zodErrors } from '@/lib/validation';
+import { Plus, Edit2, Trash2, Boxes, X, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import formStyles from '@/components/ui/form.module.css';
 
 type Seller = {
   id: number;
   name: string;
-  email: string | null;
-  phone: string | null;
   tier: number | null;
+  banner_url: string | null;
+  created_at: string;
+  seller_contact?: { count: number }[];
+};
+
+type SellerContactRow = {
+  id: number;
+  seller_id: number;
+  state_id: number;
+  alias_name: string | null;
+  phone: string | null;
+  email: string | null;
   address: string | null;
   complemento: string | null;
   bairro: string | null;
   cep: string | null;
-  banner_url: string | null;
-  created_at: string;
 };
+
+type ContactForm = {
+  id?: number; // set when editing an existing contact row
+  state_id: string; // form fields are strings; state_id parses to int on save
+  alias_name: string;
+  phone: string;
+  email: string;
+  address: string;
+  complemento: string;
+  bairro: string;
+  cep: string;
+};
+
+const emptyContact = (): ContactForm => ({
+  id: undefined,
+  state_id: '',
+  alias_name: '',
+  phone: '',
+  email: '',
+  address: '',
+  complemento: '',
+  bairro: '',
+  cep: '',
+});
+
+const isContactEmpty = (c: ContactForm) =>
+  !c.state_id && !c.alias_name && !c.phone && !c.email && !c.address && !c.complemento && !c.bairro && !c.cep;
 
 type StateRef = { id: number; name: string; uf: string };
 type MaterialRef = { id: number; name: string };
@@ -64,15 +99,11 @@ export default function SellersPage() {
   // Form State
   const [formData, setFormData] = useState({
     name: '',
-    email: '',
-    phone: '',
     tier: '',
-    address: '',
-    complemento: '',
-    bairro: '',
-    cep: '',
     banner_url: ''
   });
+  const [contacts, setContacts] = useState<ContactForm[]>([emptyContact()]);
+  const [originalContactIds, setOriginalContactIds] = useState<number[]>([]);
 
   const supabase = createClient();
 
@@ -80,7 +111,7 @@ export default function SellersPage() {
     setLoading(true);
     const { data, error } = await supabase
       .from('seller')
-      .select('*')
+      .select('*, seller_contact(count)')
       .order('id', { ascending: false });
 
     if (error) {
@@ -186,26 +217,40 @@ export default function SellersPage() {
     }
   };
 
-  const handleOpenModal = (seller?: Seller) => {
+  const handleOpenModal = async (seller?: Seller) => {
     if (seller) {
       setEditingSeller(seller);
       setFormData({
         name: seller.name || '',
-        email: seller.email || '',
-        phone: seller.phone || '',
         tier: seller.tier !== null && seller.tier !== undefined ? seller.tier.toString() : '',
-        address: seller.address || '',
-        complemento: seller.complemento || '',
-        bairro: seller.bairro || '',
-        cep: seller.cep || '',
         banner_url: seller.banner_url || ''
       });
+      const { data, error } = await supabase
+        .from('seller_contact')
+        .select('*')
+        .eq('seller_id', seller.id)
+        .order('id');
+      if (error) toast.error('Erro ao buscar contatos do representante');
+      const rows = (data as SellerContactRow[] | null) ?? [];
+      setOriginalContactIds(rows.map(r => r.id));
+      setContacts(rows.length
+        ? rows.map(r => ({
+            id: r.id,
+            state_id: String(r.state_id),
+            alias_name: r.alias_name || '',
+            phone: r.phone || '',
+            email: r.email || '',
+            address: r.address || '',
+            complemento: r.complemento || '',
+            bairro: r.bairro || '',
+            cep: r.cep || '',
+          }))
+        : [emptyContact()]);
     } else {
       setEditingSeller(null);
-      setFormData({
-        name: '', email: '', phone: '', tier: '',
-        address: '', complemento: '', bairro: '', cep: '', banner_url: ''
-      });
+      setFormData({ name: '', tier: '', banner_url: '' });
+      setOriginalContactIds([]);
+      setContacts([emptyContact()]);
     }
     setErrors({});
     setIsModalOpen(true);
@@ -220,16 +265,49 @@ export default function SellersPage() {
     setFormData(prev => ({ ...prev, [e.target.id]: e.target.value }));
   };
 
+  const handleContactChange = (index: number, field: keyof ContactForm, value: string) => {
+    setContacts(prev => prev.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
+  };
+
+  const addContact = () => setContacts(prev => [...prev, emptyContact()]);
+
+  const removeContact = (index: number) => {
+    setContacts(prev => prev.length > 1 ? prev.filter((_, i) => i !== index) : [emptyContact()]);
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    const result = sellerSchema.safeParse({
-      name: formData.name,
-      email: formData.email,
-      phone: formData.phone,
-      tier: formData.tier,
-    });
+    const result = sellerSchema.safeParse({ name: formData.name, tier: formData.tier });
     if (!result.success) {
       setErrors(zodErrors(result.error));
+      return;
+    }
+
+    const filled = contacts.filter(c => !isContactEmpty(c));
+
+    // Per-contact validation; errors keyed by position in `contacts`
+    const contactErrors: Record<string, string> = {};
+    contacts.forEach((c, i) => {
+      if (isContactEmpty(c)) return;
+      const r = sellerContactSchema.safeParse({ state_id: c.state_id, email: c.email });
+      if (!r.success) {
+        for (const [k, v] of Object.entries(zodErrors(r.error))) contactErrors[`contact-${i}.${k}`] = v;
+      }
+    });
+
+    // One contact per state
+    const seen = new Set<string>();
+    for (const c of filled) {
+      if (seen.has(c.state_id)) {
+        contactErrors[`contact-${contacts.indexOf(c)}.state_id`] = 'Cada estado pode ter apenas um contato.';
+        break;
+      }
+      seen.add(c.state_id);
+    }
+
+    if (Object.keys(contactErrors).length > 0) {
+      setErrors(contactErrors);
+      toast.error('Verifique os contatos informados.');
       return;
     }
     setErrors({});
@@ -237,35 +315,70 @@ export default function SellersPage() {
 
     const payload = {
       name: formData.name,
-      email: formData.email || null,
-      phone: formData.phone || null,
       tier: formData.tier ? parseInt(formData.tier, 10) : null,
-      address: formData.address || null,
-      complemento: formData.complemento || null,
-      bairro: formData.bairro || null,
-      cep: formData.cep || null,
       banner_url: formData.banner_url || null,
     };
 
+    const toRow = (c: ContactForm, sellerId: number) => ({
+      seller_id: sellerId,
+      state_id: parseInt(c.state_id, 10),
+      alias_name: c.alias_name || null,
+      phone: c.phone || null,
+      email: c.email || null,
+      address: c.address || null,
+      complemento: c.complemento || null,
+      bairro: c.bairro || null,
+      cep: c.cep || null,
+    });
+
     try {
+      let sellerId: number;
       if (editingSeller) {
-        const { error } = await supabase
-          .from('seller')
-          .update(payload)
-          .eq('id', editingSeller.id);
+        const { error } = await supabase.from('seller').update(payload).eq('id', editingSeller.id);
         if (error) throw error;
+        sellerId = editingSeller.id;
+
+        // Sync contacts: delete removed rows, update kept ones, insert new ones
+        const keptIds = new Set(filled.map(c => c.id).filter(Boolean) as number[]);
+        const toDelete = originalContactIds.filter(id => !keptIds.has(id));
+        if (toDelete.length) {
+          const { error } = await supabase.from('seller_contact').delete().in('id', toDelete);
+          if (error) throw error;
+        }
+        const existing = filled.filter(c => c.id);
+        const fresh = filled.filter(c => !c.id);
+        for (const c of existing) {
+          const { error } = await supabase.from('seller_contact').update(toRow(c, sellerId)).eq('id', c.id!);
+          if (error) throw error;
+        }
+        if (fresh.length) {
+          const { error } = await supabase.from('seller_contact').insert(fresh.map(c => toRow(c, sellerId)));
+          if (error) throw error;
+        }
         toast.success('Representante atualizado com sucesso');
       } else {
-        const { error } = await supabase
+        const { data: created, error } = await supabase
           .from('seller')
-          .insert([payload]);
+          .insert([payload])
+          .select('id')
+          .single();
         if (error) throw error;
+        sellerId = created.id;
+        if (filled.length) {
+          const { error } = await supabase.from('seller_contact').insert(filled.map(c => toRow(c, sellerId)));
+          // ponytail: on partial failure the seller stays; user re-edits to retry contacts
+          if (error) throw error;
+        }
         toast.success('Representante criado com sucesso');
       }
       handleCloseModal();
       fetchSellers();
     } catch (error: any) {
-      toast.error(error.message || 'Erro ao salvar representante');
+      if (error?.code === '23505') {
+        toast.error('Este estado já possui um contato para este representante.');
+      } else {
+        toast.error(error.message || 'Erro ao salvar representante');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -314,7 +427,18 @@ export default function SellersPage() {
       )
     },
     { header: 'Nome', accessorKey: 'name' },
-    { header: 'Email', accessorKey: 'email', cell: (row) => row.email || '-' },
+    {
+      header: 'Contatos',
+      accessorKey: 'seller_contact',
+      sortable: false,
+      width: '7rem',
+      cell: (row) => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
+          <MapPin size={14} aria-hidden="true" />
+          {row.seller_contact?.[0]?.count ?? 0}
+        </span>
+      )
+    },
     { header: 'Nível (Tier)', accessorKey: 'tier', width: '10rem', cell: (row) => <TierBadge tier={row.tier} /> },
     {
       header: 'Ações',
@@ -375,7 +499,7 @@ export default function SellersPage() {
         <Table
           data={sellers}
           columns={columns}
-          searchKeys={['name', 'email', 'phone']}
+          searchKeys={['name']}
         />
       )}
 
@@ -409,38 +533,159 @@ export default function SellersPage() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className={formStyles.formGroup}>
-              <label className={formStyles.label} htmlFor="email">Email</label>
-              <input type="email" id="email" className={formStyles.input} value={formData.email} onChange={handleChange} aria-invalid={!!errors.email} />
-              {errors.email && <span className={formStyles.errorText} role="alert">{errors.email}</span>}
-            </div>
-            <div className={formStyles.formGroup}>
-              <label className={formStyles.label} htmlFor="phone">Telefone</label>
-              <input type="text" id="phone" className={formStyles.input} value={formData.phone} onChange={handleChange} />
-            </div>
+          <div className={formStyles.formGroup}
+            style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}
+          >
+            <label className={formStyles.label}>Contatos por Estado</label>
+            <span className={formStyles.helperText}>Um contato por estado. Opcionalmente informe um nome de exibição (alias) se o representante atende com outro nome nesse estado.</span>
           </div>
 
-          <div className={formStyles.formGroup}>
-            <label className={formStyles.label} htmlFor="address">Endereço</label>
-            <input type="text" id="address" className={formStyles.input} value={formData.address} onChange={handleChange} />
-          </div>
+          {contacts.map((contact, i) => {
+            const stateName = states.find(s => s.id.toString() === contact.state_id)?.name;
+            return (
+              <fieldset
+                key={contact.id ?? `new-${i}`}
+                style={{
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '1rem',
+                  margin: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem',
+                }}
+              >
+                <legend className={formStyles.label} style={{ padding: '0 0.375rem' }}>
+                  {stateName ? `Contato — ${stateName}` : `Contato #${i + 1}`}
+                </legend>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-state-${i}`}>Estado</label>
+                    <select
+                      id={`contact-state-${i}`}
+                      className={formStyles.select}
+                      value={contact.state_id}
+                      onChange={(e) => handleContactChange(i, 'state_id', e.target.value)}
+                      aria-invalid={!!errors[`contact-${i}.state_id`]}
+                    >
+                      <option value="" disabled>Selecione o estado</option>
+                      {states.map((s) => (
+                        <option
+                          key={s.id}
+                          value={s.id}
+                          disabled={contacts.some((c, j) => j !== i && c.state_id === s.id.toString())}
+                        >
+                          {s.name} ({s.uf})
+                        </option>
+                      ))}
+                    </select>
+                    {errors[`contact-${i}.state_id`] && <span className={formStyles.errorText} role="alert">{errors[`contact-${i}.state_id`]}</span>}
+                  </div>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-alias-${i}`}>Nome de exibição (opcional)</label>
+                    <input
+                      type="text"
+                      id={`contact-alias-${i}`}
+                      className={formStyles.input}
+                      value={contact.alias_name}
+                      onChange={(e) => handleContactChange(i, 'alias_name', e.target.value)}
+                      placeholder="ex. Bio Saúde Sul"
+                    />
+                  </div>
+                </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className={formStyles.formGroup}>
-              <label className={formStyles.label} htmlFor="bairro">Bairro</label>
-              <input type="text" id="bairro" className={formStyles.input} value={formData.bairro} onChange={handleChange} />
-            </div>
-            <div className={formStyles.formGroup}>
-              <label className={formStyles.label} htmlFor="cep">CEP</label>
-              <input type="text" id="cep" className={formStyles.input} value={formData.cep} onChange={handleChange} />
-            </div>
-          </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-phone-${i}`}>Telefone</label>
+                    <input
+                      type="text"
+                      id={`contact-phone-${i}`}
+                      className={formStyles.input}
+                      value={contact.phone}
+                      onChange={(e) => handleContactChange(i, 'phone', e.target.value)}
+                    />
+                  </div>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-email-${i}`}>Email</label>
+                    <input
+                      type="email"
+                      id={`contact-email-${i}`}
+                      className={formStyles.input}
+                      value={contact.email}
+                      onChange={(e) => handleContactChange(i, 'email', e.target.value)}
+                      aria-invalid={!!errors[`contact-${i}.email`]}
+                    />
+                    {errors[`contact-${i}.email`] && <span className={formStyles.errorText} role="alert">{errors[`contact-${i}.email`]}</span>}
+                  </div>
+                </div>
 
-          <div className={formStyles.formGroup}>
-            <label className={formStyles.label} htmlFor="complemento">Complemento</label>
-            <input type="text" id="complemento" className={formStyles.input} value={formData.complemento} onChange={handleChange} />
-          </div>
+                <div className={formStyles.formGroup}>
+                  <label className={formStyles.label} htmlFor={`contact-address-${i}`}>Endereço</label>
+                  <input
+                    type="text"
+                    id={`contact-address-${i}`}
+                    className={formStyles.input}
+                    value={contact.address}
+                    onChange={(e) => handleContactChange(i, 'address', e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-bairro-${i}`}>Bairro</label>
+                    <input
+                      type="text"
+                      id={`contact-bairro-${i}`}
+                      className={formStyles.input}
+                      value={contact.bairro}
+                      onChange={(e) => handleContactChange(i, 'bairro', e.target.value)}
+                    />
+                  </div>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-cep-${i}`}>CEP</label>
+                    <input
+                      type="text"
+                      id={`contact-cep-${i}`}
+                      className={formStyles.input}
+                      value={contact.cep}
+                      onChange={(e) => handleContactChange(i, 'cep', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '1rem', alignItems: 'end' }}>
+                  <div className={formStyles.formGroup}>
+                    <label className={formStyles.label} htmlFor={`contact-complemento-${i}`}>Complemento</label>
+                    <input
+                      type="text"
+                      id={`contact-complemento-${i}`}
+                      className={formStyles.input}
+                      value={contact.complemento}
+                      onChange={(e) => handleContactChange(i, 'complemento', e.target.value)}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className={`${formStyles.btn} ${formStyles.btnDanger}`}
+                    onClick={() => removeContact(i)}
+                    aria-label={`Remover contato ${stateName ?? `#${i + 1}`}`}
+                    title="Remover contato"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </fieldset>
+            );
+          })}
+
+          <button
+            type="button"
+            className={`${formStyles.btn} ${formStyles.btnSecondary}`}
+            onClick={addContact}
+          >
+            <Plus size={16} />
+            <span>Adicionar Contato</span>
+          </button>
 
           <div className={formStyles.actions}>
             <button

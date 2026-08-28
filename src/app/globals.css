@@ -238,7 +238,10 @@ button {
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* End at none — a filled translateY(0) still counts as a transform, which
+     makes .dashboard-content the containing block for position:fixed children
+     (modals) and breaks their viewport anchoring. */
+  to { opacity: 1; transform: none; }
 }
 
 .animate-in {
