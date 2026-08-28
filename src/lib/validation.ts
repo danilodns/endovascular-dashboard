@@ -39,11 +39,9 @@ export const sellerContactSchema = z.object({
 });
 
 /** Converts a ZodError into a flat { field: message } map (first message per field wins). */
-export function zodErrors(error: z.ZodError): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of error.issues) {
-    const key = String(issue.path[0] ?? '');
-    if (key && !out[key]) out[key] = issue.message;
-  }
-  return out;
-}
+export const zodErrors = (error: z.ZodError): Record<string, string> =>
+  Object.fromEntries(
+    (Object.entries(z.flattenError(error).fieldErrors) as [string, string[]][])
+      .map(([key, messages]) => [key, messages?.[0]])
+      .filter(([, msg]) => !!msg)
+  );
