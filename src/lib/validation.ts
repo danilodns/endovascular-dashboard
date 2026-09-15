@@ -38,23 +38,10 @@ export const sellerContactSchema = z.object({
   email: z.string().trim().email('Informe um e-mail válido.').or(z.literal('')).optional(),
 });
 
-export const procedureMaterialSchema = z.object({
-  procedure_id: requiredString('Selecione o procedimento.'),
-  material_id: requiredString('Selecione o material.'),
-});
-
-export const materialSellerSchema = z.object({
-  state_id: requiredString('Selecione o estado.'),
-  seller_id: requiredString('Selecione o representante.'),
-  material_id: requiredString('Selecione o material.'),
-});
-
 /** Converts a ZodError into a flat { field: message } map (first message per field wins). */
-export function zodErrors(error: z.ZodError): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of error.issues) {
-    const key = String(issue.path[0] ?? '');
-    if (key && !out[key]) out[key] = issue.message;
-  }
-  return out;
-}
+export const zodErrors = (error: z.ZodError): Record<string, string> =>
+  Object.fromEntries(
+    (Object.entries(z.flattenError(error).fieldErrors) as [string, string[]][])
+      .map(([key, messages]) => [key, messages?.[0]])
+      .filter(([, msg]) => !!msg)
+  );

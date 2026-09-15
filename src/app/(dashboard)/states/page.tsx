@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { useState } from 'react';
 import { Table, Column } from '@/components/ui/Table';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { TableSkeleton } from '@/components/ui/TableSkeleton';
-import { stateSchema, zodErrors } from '@/lib/validation';
+import { stateSchema } from '@/lib/validation';
+import { useCrud } from '@/lib/useCrud';
 import { Plus, Edit2, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import formStyles from '@/components/ui/form.module.css';
@@ -18,130 +18,50 @@ type State = {
 };
 
 export default function StatesPage() {
-  const [states, setStates] = useState<State[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingState, setEditingState] = useState<State | null>(null);
+  const crud = useCrud<State>('state', stateSchema, {
+    singular: 'estado', plural: 'estados', gender: 'o',
+  }, { column: 'name', ascending: true });
   const [name, setName] = useState('');
   const [uf, setUf] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
   const [copyFrom, setCopyFrom] = useState('');
 
-  const [pendingDelete, setPendingDelete] = useState<State | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const supabase = createClient();
-
-  const fetchStates = async () => {
-    setLoading(true);
-    const { data, error } = await supabase.from('state').select('*').order('name', { ascending: true });
-    if (error) {
-      toast.error('Erro ao buscar estados');
-    } else {
-      setStates(data || []);
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    fetchStates();
-  }, []);
-
   const handleOpenModal = (state?: State) => {
-    if (state) {
-      setEditingState(state);
-      setName(state.name);
-      setUf(state.uf || '');
-    } else {
-      setEditingState(null);
-      setName('');
-      setUf('');
-      setCopyFrom('');
-    }
-    setErrors({});
-    setIsModalOpen(true);
+    crud.openModal(state);
+    setName(state?.name ?? '');
+    setUf(state?.uf ?? '');
+    if (!state) setCopyFrom('');
   };
 
   const handleCloseModal = () => {
-    setIsModalOpen(false);
-    setEditingState(null);
+    crud.closeModal();
     setName('');
     setUf('');
     setCopyFrom('');
   };
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    const result = stateSchema.safeParse({ name, uf });
-    if (!result.success) {
-      setErrors(zodErrors(result.error));
-      return;
-    }
-    setErrors({});
-    setIsSaving(true);
-
-    try {
-      if (editingState) {
-        const { error } = await supabase
-          .from('state')
-          .update({ name, uf: uf.toUpperCase() })
-          .eq('id', editingState.id);
-        if (error) throw error;
-        toast.success('Estado atualizado com sucesso');
-      } else {
-        const { data, error } = await supabase
-          .from('state')
-          .insert([{ name, uf: uf.toUpperCase() }])
-          .select('id')
-          .single();
-        if (error) throw error;
-
-        if (copyFrom) {
-          const { data: relations, error: relError } = await supabase
-            .from('material_seller')
-            .select('seller_id, material_id')
-            .eq('state_id', Number(copyFrom));
-          if (relError) throw relError;
-
-          if (relations && relations.length > 0) {
-            const { error: insertError } = await supabase
-              .from('material_seller')
-              .insert(relations.map((r) => ({ ...r, state_id: data.id })));
-            if (insertError) throw insertError;
-            toast.success(`Estado criado com sucesso (${relations.length} vínculos copiados)`);
-          } else {
-            toast.success('Estado criado com sucesso (nenhum dado para copiar)');
-          }
-        } else {
-          toast.success('Estado criado com sucesso');
-        }
+    crud.save({ name, uf: uf.toUpperCase() }, async (newState) => {
+      if (!copyFrom) {
+        toast.success('Estado criado com sucesso');
+        return;
       }
-      handleCloseModal();
-      fetchStates();
-    } catch (error: any) {
-      toast.error(error.message || 'Erro ao salvar estado');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+      const { data: relations, error: relError } = await crud.supabase
+        .from('material_seller')
+        .select('seller_id, material_id')
+        .eq('state_id', Number(copyFrom));
+      if (relError) throw relError;
 
-  const handleDelete = (state: State) => {
-    setPendingDelete(state);
-  };
-
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
-    setDeleting(true);
-    const { error } = await supabase.from('state').delete().eq('id', pendingDelete.id);
-    setDeleting(false);
-    if (error) {
-      toast.error('Erro ao excluir estado. Pode estar em uso.');
-    } else {
-      toast.success('Estado excluído com sucesso');
-      setPendingDelete(null);
-      fetchStates();
-    }
+      if (relations && relations.length > 0) {
+        const { error: insertError } = await crud.supabase
+          .from('material_seller')
+          .insert(relations.map((r) => ({ ...r, state_id: newState.id })));
+        if (insertError) throw insertError;
+        toast.success(`Estado criado com sucesso (${relations.length} vínculos copiados)`);
+      } else {
+        toast.success('Estado criado com sucesso (nenhum dado para copiar)');
+      }
+    });
   };
 
   const columns: Column<State>[] = [
@@ -168,7 +88,7 @@ export default function StatesPage() {
           <button
             className={`${formStyles.btn} ${formStyles.btnDanger}`}
             style={{ padding: '0.375rem 0.5rem' }}
-            onClick={() => handleDelete(row)}
+            onClick={() => crud.requestDelete(row)}
             aria-label={`Excluir ${row.name}`}
             title="Excluir"
           >
@@ -192,20 +112,20 @@ export default function StatesPage() {
         </button>
       </div>
 
-      {loading ? (
+      {crud.loading ? (
         <TableSkeleton columns={4} />
       ) : (
         <Table
-          data={states}
+          data={crud.rows}
           columns={columns}
           searchKeys={['name', 'uf']}
         />
       )}
 
       <Modal
-        isOpen={isModalOpen}
+        isOpen={crud.isModalOpen}
         onClose={handleCloseModal}
-        title={editingState ? 'Editar Estado' : 'Adicionar Novo Estado'}
+        title={crud.editing ? 'Editar Estado' : 'Adicionar Novo Estado'}
       >
         <form onSubmit={handleSave} className={formStyles.form}>
           <div className={formStyles.formGroup}>
@@ -217,10 +137,10 @@ export default function StatesPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              aria-invalid={!!errors.name}
+              aria-invalid={!!crud.errors.name}
               placeholder="ex. São Paulo"
             />
-            {errors.name && <span className={formStyles.errorText} role="alert">{errors.name}</span>}
+            {crud.errors.name && <span className={formStyles.errorText} role="alert">{crud.errors.name}</span>}
           </div>
 
           <div className={formStyles.formGroup}>
@@ -235,12 +155,12 @@ export default function StatesPage() {
               maxLength={2}
               placeholder="ex. SP"
               style={{ textTransform: 'uppercase' }}
-              aria-invalid={!!errors.uf}
+              aria-invalid={!!crud.errors.uf}
             />
-            {errors.uf && <span className={formStyles.errorText} role="alert">{errors.uf}</span>}
+            {crud.errors.uf && <span className={formStyles.errorText} role="alert">{crud.errors.uf}</span>}
           </div>
 
-          {!editingState && (
+          {!crud.editing && (
             <div className={formStyles.formGroup}>
               <label className={formStyles.label} htmlFor="copyFrom">Copiar dados de outro estado (opcional)</label>
               <select
@@ -250,7 +170,7 @@ export default function StatesPage() {
                 onChange={(e) => setCopyFrom(e.target.value)}
               >
                 <option value="">Não copiar</option>
-                {states.map((s) => (
+                {crud.rows.map((s) => (
                   <option key={s.id} value={s.id}>{s.name} ({s.uf})</option>
                 ))}
               </select>
@@ -269,23 +189,15 @@ export default function StatesPage() {
             <button
               type="submit"
               className={`${formStyles.btn} ${formStyles.btnPrimary}`}
-              disabled={isSaving}
+              disabled={crud.saving}
             >
-              {isSaving ? 'Salvando...' : 'Salvar'}
+              {crud.saving ? 'Salvando...' : 'Salvar'}
             </button>
           </div>
         </form>
       </Modal>
 
-      <ConfirmDialog
-        open={!!pendingDelete}
-        title="Excluir estado"
-        message="Tem certeza que deseja excluir este estado? Esta ação não pode ser desfeita."
-        confirmLabel="Excluir"
-        loading={deleting}
-        onConfirm={confirmDelete}
-        onCancel={() => setPendingDelete(null)}
-      />
+      <ConfirmDialog {...crud.confirm} />
     </div>
   );
 }
